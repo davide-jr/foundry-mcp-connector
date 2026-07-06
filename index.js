@@ -87,16 +87,20 @@ function actionsApplyPath(actionApiName) {
 }
 
 // Simplifies a raw Foundry object payload down to the fields most useful to
-// a chat client, while still returning the full property bag.
+// a chat client. Foundry's Ontology API v2 returns objects as a flat map of
+// propertyApiName -> value, plus reserved metadata keys prefixed with `__`
+// (e.g. __rid, __primaryKey, __apiName) -- there is no nested "properties"
+// object.
 function simplifyTask(obj) {
   if (!obj) return obj;
-  const props = obj.properties || {};
+  const { __rid, __primaryKey, __apiName, ...properties } = obj;
   return {
-    id: obj.primaryKey ?? props.primaryKey_ ?? props.primaryKey,
-    name: props.name,
-    status: props.status,
-    owner: props.owner,
-    properties: props,
+    id: obj.primaryKey_ ?? __primaryKey,
+    name: obj.name,
+    status: obj.status,
+    owner: obj.owner,
+    rid: __rid,
+    properties,
   };
 }
 
