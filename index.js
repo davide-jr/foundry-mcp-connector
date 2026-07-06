@@ -109,46 +109,84 @@ function simplifyTask(obj) {
 // ---------------------------------------------------------------------------
 const server = new McpServer({
   name: "foundry-tasks",
-  version: "1.1.0",
+  version: "1.2.0",
 });
 
 server.tool(
   "list_tasks",
-  "List Deliverables (tasks/to-dos) from Foundry, optionally filtered by status and/or owner.",
+  "List Deliverables (tasks/to-dos) from Foundry, optionally filtered by status(es), owner, and/or overall involvement (owner, finalizer, or collaborator).",
   {
     status: z
       .enum(ALLOWED_STATUSES)
       .optional()
-      .describe("Only return tasks in this status."),
+      .describe("Only return tasks in this single status."),
+    statuses: z
+      .array(z.enum(ALLOWED_STATUSES))
+      .optional()
+      .describe(
+        "Only return tasks in any of these statuses (OR'd together). Use this instead of `status` to fetch several statuses at once, e.g. everything still open."
+      ),
     ownerId: z
       .string()
       .optional()
       .describe("Only return tasks owned by this user id."),
+    involvingUserId: z
+      .string()
+      .optional()
+      .describe(
+        "Only return tasks where this user id is the owner, the finalizer (finalizerS_), OR listed in collaborators. Use this to get everything a person is on the hook for, not just what they own."
+      ),
     pageSize: z.number().int().min(1).max(200).optional().default(50),
+    pageToken: z
+      .string()
+      .optional()
+      .describe(
+        "Token from a previous response's nextPageToken, to fetch the next page of results."
+      ),
   },
-  async ({ status, ownerId, pageSize }) => {
+  async ({ status, statuses, ownerId, involvingUserId, pageSize, pageToken }) => {
+    const conditions = [];
+    if (status) {
+      conditions.push({ type: "eq", field: "status", value: status });
+    }
+    if (statuses && statuses.length > 0) {
+      conditions.push({
+        type: "or",
+        value: statuses.map((s) => ({ type: "eq", field: "status", value: s })),
+      });
+    }
+    if (ownerId) {
+      conditions.push({ type: "eq", field: "owner", value: ownerId });
+    }
+    if (involvingUserId) {
+      conditions.push({
+        type: "or",
+        value: [
+          { type: "eq", field: "owner", value: involvingUserId },
+          { type: "eq", field: "finalizerS_", value: involvingUserId },
+          { type: "contains", field: "collaborators", value: involvingUserId },
+        ],
+      });
+    }
+
     let result;
-    if (status || ownerId) {
-      const conditions = [];
-      if (status) {
-        conditions.push({ type: "eq", field: "status", value: status });
-      }
-      if (ownerId) {
-        conditions.push({ type: "eq", field: "owner", value: ownerId });
-      }
+    if (conditions.length > 0) {
       const where =
         conditions.length === 1
           ? conditions[0]
           : { type: "and", value: conditions };
 
+      const body = { where, pageSize };
+      if (pageToken) body.pageToken = pageToken;
+
       result = await foundryFetch(`${objectsBasePath()}/search`, {
         method: "POST",
-        body: JSON.stringify({ where, pageSize }),
+        body: JSON.stringify(body),
       });
     } else {
-      result = await foundryFetch(
-        `${objectsBasePath()}?pageSize=${pageSize}`
-      );
+      const qs = new URLSearchParams({ pageSize: String(pageSize) });
+      if (pageToken) qs.set("pageToken", pageToken);
+      result = await foundryFetch(`${objectsBasePath()}?${qs.toString()}`);
     }
 
     const tasks = (result.data || []).map(simplifyTask);
